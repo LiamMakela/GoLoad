@@ -122,10 +122,18 @@ func (p *Proxy) serveWebSocket(
 }
 
 func websocketKey(r *http.Request) string {
-	const prefix = "/ws/game/"
+	// Expected:
+	// /games/{game_id}/ws/{player_id}
 
-	if strings.HasPrefix(r.URL.Path, prefix) {
-		return strings.TrimPrefix(r.URL.Path, prefix)
+	parts := strings.Split(
+		strings.Trim(r.URL.Path, "/"),
+		"/",
+	)
+
+	if len(parts) >= 4 &&
+		parts[0] == "games" &&
+		parts[2] == "ws" {
+		return parts[1]
 	}
 
 	return ""

@@ -13,11 +13,8 @@ proxy:
   retries: 2
 
 backends:
-  - name: connect4-1
-    url: http://localhost:8001
-
-  - name: connect4-2
-    url: http://localhost:8002
+  - url: "http://localhost:8001"
+  - url: "http://localhost:8002"
 
 rate_limit:
   enabled: true
