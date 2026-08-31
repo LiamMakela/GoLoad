@@ -30,13 +30,11 @@ func New(
 }
 
 func (c *Checker) Start(ctx context.Context) {
-	ticker := time.NewTicker(c.interval)
-
 	go func() {
-		defer ticker.Stop()
-
-		// Run one check immediately.
 		c.checkAll()
+
+		ticker := time.NewTicker(c.interval)
+		defer ticker.Stop()
 
 		for {
 			select {
@@ -44,7 +42,6 @@ func (c *Checker) Start(ctx context.Context) {
 				c.checkAll()
 
 			case <-ctx.Done():
-				log.Println("health checker stopped")
 				return
 			}
 		}
@@ -58,28 +55,34 @@ func (c *Checker) checkAll() {
 }
 
 func (c *Checker) check(b *backend.Backend) {
-	resp, err := c.client.Get(b.URL.String() + "/health")
+	resp, err := c.client.Get(
+		b.URL.String() + "/health",
+	)
 
-	if err != nil {
-		if b.Alive.Swap(false) {
-			log.Printf("backend %s is DOWN", b.URL)
-		}
+	healthy := err == nil &&
+		resp != nil &&
+		resp.StatusCode >= 200 &&
+		resp.StatusCode < 300
 
+	if resp != nil {
+		resp.Body.Close()
+	}
+
+	wasHealthy := b.Alive.Swap(healthy)
+
+	if healthy == wasHealthy {
 		return
 	}
 
-	defer resp.Body.Close()
+	state := "DOWN"
 
-	healthy := resp.StatusCode >= 200 &&
-		resp.StatusCode < 300
-
-	wasAlive := b.Alive.Swap(healthy)
-
-	if healthy && !wasAlive {
-		log.Printf("backend %s is UP", b.URL)
+	if healthy {
+		state = "UP"
 	}
 
-	if !healthy && wasAlive {
-		log.Printf("backend %s is DOWN", b.URL)
-	}
+	log.Printf(
+		"backend %s is %s",
+		b.URL,
+		state,
+	)
 }

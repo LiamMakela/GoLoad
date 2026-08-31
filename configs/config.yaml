@@ -18,5 +18,5 @@ backends:
 
 rate_limit:
   enabled: false
-  requests_per_second: 1000
-  burst: 2000
+  requests_per_second: 20
+  burst: 40

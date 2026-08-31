@@ -17,17 +17,18 @@ const (
 
 type Balancer struct {
 	backends []*backend.Backend
-	counter  atomic.Uint64
 	strategy Strategy
+	counter  atomic.Uint64
 }
 
 func New(backends []*backend.Backend, strategy string) (*Balancer, error) {
 	s := Strategy(strategy)
 
-	switch s {
-	case RoundRobin, LeastConnections:
-	default:
-		return nil, fmt.Errorf("unknown load balancing strategy: %s", strategy)
+	if s != RoundRobin && s != LeastConnections {
+		return nil, fmt.Errorf(
+			"unknown load balancing strategy: %s",
+			strategy,
+		)
 	}
 
 	return &Balancer{
@@ -37,66 +38,7 @@ func New(backends []*backend.Backend, strategy string) (*Balancer, error) {
 }
 
 func (b *Balancer) Next() *backend.Backend {
-	switch b.strategy {
-	case RoundRobin:
-		return b.roundRobin()
-
-	case LeastConnections:
-		return b.leastConnections()
-
-	default:
-		return nil
-	}
-}
-
-func (b *Balancer) roundRobin() *backend.Backend {
-	n := len(b.backends)
-
-	if n == 0 {
-		return nil
-	}
-
-	for i := 0; i < n; i++ {
-		index := (b.counter.Add(1) - 1) % uint64(n)
-		target := b.backends[index]
-
-		if target.Alive.Load() {
-			return target
-		}
-	}
-
-	return nil
-}
-
-func (b *Balancer) leastConnections() *backend.Backend {
-	n := len(b.backends)
-
-	if n == 0 {
-		return nil
-	}
-
-	start := int(b.counter.Add(1) % uint64(n))
-
-	var selected *backend.Backend
-	var minConnections int64
-
-	for i := 0; i < n; i++ {
-		index := (start + i) % n
-		candidate := b.backends[index]
-
-		if !candidate.Alive.Load() {
-			continue
-		}
-
-		connections := candidate.ActiveConnections.Load()
-
-		if selected == nil || connections < minConnections {
-			selected = candidate
-			minConnections = connections
-		}
-	}
-
-	return selected
+	return b.NextExcluding(nil)
 }
 
 func (b *Balancer) NextExcluding(
@@ -104,17 +46,17 @@ func (b *Balancer) NextExcluding(
 ) *backend.Backend {
 	switch b.strategy {
 	case RoundRobin:
-		return b.roundRobinExcluding(excluded)
+		return b.roundRobin(excluded)
 
 	case LeastConnections:
-		return b.leastConnectionsExcluding(excluded)
+		return b.leastConnections(excluded)
 
 	default:
 		return nil
 	}
 }
 
-func (b *Balancer) roundRobinExcluding(
+func (b *Balancer) roundRobin(
 	excluded map[string]bool,
 ) *backend.Backend {
 	n := len(b.backends)
@@ -123,25 +65,24 @@ func (b *Balancer) roundRobinExcluding(
 		return nil
 	}
 
+	start := b.counter.Add(1) - 1
+
 	for i := 0; i < n; i++ {
-		index := b.counter.Add(1) % uint64(n)
-		target := b.backends[index]
+		index := int(
+			(start + uint64(i)) % uint64(n),
+		)
 
-		if !target.Alive.Load() {
-			continue
+		candidate := b.backends[index]
+
+		if available(candidate, excluded) {
+			return candidate
 		}
-
-		if excluded[target.URL.String()] {
-			continue
-		}
-
-		return target
 	}
 
 	return nil
 }
 
-func (b *Balancer) leastConnectionsExcluding(
+func (b *Balancer) leastConnections(
 	excluded map[string]bool,
 ) *backend.Backend {
 	n := len(b.backends)
@@ -150,52 +91,81 @@ func (b *Balancer) leastConnectionsExcluding(
 		return nil
 	}
 
-	start := int(b.counter.Add(1) % uint64(n))
+	start := int(
+		(b.counter.Add(1) - 1) % uint64(n),
+	)
 
 	var selected *backend.Backend
-	var minConnections int64
+	var fewest int64
 
 	for i := 0; i < n; i++ {
-		index := (start + i) % n
-		candidate := b.backends[index]
+		candidate := b.backends[(start+i)%n]
 
-		if !candidate.Alive.Load() {
+		if !available(candidate, excluded) {
 			continue
 		}
 
-		if excluded[candidate.URL.String()] {
-			continue
-		}
-
-		connections := candidate.ActiveConnections.Load()
+		connections :=
+			candidate.ActiveConnections.Load()
 
 		if selected == nil ||
-			connections < minConnections {
+			connections < fewest {
+
 			selected = candidate
-			minConnections = connections
+			fewest = connections
 		}
 	}
 
 	return selected
 }
 
-func (b *Balancer) ConsistentHash(key string) *backend.Backend {
-	healthy := make([]*backend.Backend, 0)
+func available(
+	b *backend.Backend,
+	excluded map[string]bool,
+) bool {
+	if !b.Alive.Load() {
+		return false
+	}
+
+	return excluded == nil ||
+		!excluded[b.URL.String()]
+}
+
+// ConsistentHash uses rendezvous hashing so the same key
+// consistently prefers the same healthy backend.
+func (b *Balancer) ConsistentHash(
+	key string,
+) *backend.Backend {
+	var selected *backend.Backend
+	var highestScore uint64
 
 	for _, candidate := range b.backends {
-		if candidate.Alive.Load() {
-			healthy = append(healthy, candidate)
+		if !candidate.Alive.Load() {
+			continue
+		}
+
+		score := hash(
+			key,
+			candidate.URL.String(),
+		)
+
+		if selected == nil ||
+			score > highestScore {
+
+			selected = candidate
+			highestScore = score
 		}
 	}
 
-	if len(healthy) == 0 {
-		return nil
-	}
+	return selected
+}
 
-	h := fnv.New32a()
+func hash(key, backendURL string) uint64 {
+	h := fnv.New64a()
+
 	_, _ = h.Write([]byte(key))
+	_, _ = h.Write([]byte{0})
+	_, _ = h.Write([]byte(backendURL))
 
-	index := int(h.Sum32()) % len(healthy)
-
-	return healthy[index]
+	return h.Sum64()
 }

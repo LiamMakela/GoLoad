@@ -88,31 +88,19 @@ func TestRoundRobin(t *testing.T) {
 	fourth := balancer.Next()
 
 	if first != b1 {
-		t.Fatalf(
-			"expected first backend to be b1, got %v",
-			first.URL,
-		)
+		t.Fatalf("expected b1, got %v", first.URL)
 	}
 
 	if second != b2 {
-		t.Fatalf(
-			"expected second backend to be b2, got %v",
-			second.URL,
-		)
+		t.Fatalf("expected b2, got %v", second.URL)
 	}
 
 	if third != b3 {
-		t.Fatalf(
-			"expected third backend to be b3, got %v",
-			third.URL,
-		)
+		t.Fatalf("expected b3, got %v", third.URL)
 	}
 
 	if fourth != b1 {
-		t.Fatalf(
-			"expected round robin to wrap to b1, got %v",
-			fourth.URL,
-		)
+		t.Fatalf("expected b1, got %v", fourth.URL)
 	}
 }
 

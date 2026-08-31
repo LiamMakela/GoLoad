@@ -16,30 +16,25 @@ import (
 	"github.com/LiamMakela/GoLoad/internal/config"
 	"github.com/LiamMakela/GoLoad/internal/health"
 	"github.com/LiamMakela/GoLoad/internal/metrics"
-	"github.com/LiamMakela/GoLoad/internal/middleware"
 	"github.com/LiamMakela/GoLoad/internal/proxy"
 	"github.com/LiamMakela/GoLoad/internal/ratelimit"
 )
 
 func main() {
-	cfg, err := config.Load("configs/config.yaml")
+	cfg, err :=
+		config.Load(
+			"configs/config.yaml",
+		)
+
 	if err != nil {
-		log.Fatalf("failed to load config: %v", err)
+		log.Fatal(err)
 	}
 
-	var backends []*backend.Backend
+	backends, err :=
+		createBackends(cfg.Backends)
 
-	for _, backendConfig := range cfg.Backends {
-		b, err := backend.New(backendConfig.URL)
-		if err != nil {
-			log.Fatalf(
-				"invalid backend %s: %v",
-				backendConfig.URL,
-				err,
-			)
-		}
-
-		backends = append(backends, b)
+	if err != nil {
+		log.Fatal(err)
 	}
 
 	lb, err := balancer.New(
@@ -48,10 +43,7 @@ func main() {
 	)
 
 	if err != nil {
-		log.Fatalf(
-			"failed to create load balancer: %v",
-			err,
-		)
+		log.Fatal(err)
 	}
 
 	ctx, stop := signal.NotifyContext(
@@ -62,17 +54,15 @@ func main() {
 
 	defer stop()
 
-	checker := health.New(
+	health.New(
 		backends,
 		cfg.Health.Interval,
 		cfg.Health.Timeout,
-	)
-
-	checker.Start(ctx)
+	).Start(ctx)
 
 	m := metrics.New(backends)
 
-	proxyHandler := proxy.New(
+	var handler http.Handler = proxy.New(
 		lb,
 		m,
 		cfg.Proxy.Timeout,
@@ -80,30 +70,23 @@ func main() {
 		ctx,
 	)
 
-	mux := http.NewServeMux()
-
-	mux.Handle("/metrics", m)
-
-	var publicHandler http.Handler = proxyHandler
-
 	if cfg.RateLimit.Enabled {
-		limiter := ratelimit.NewIPLimiter(
-			cfg.RateLimit.RequestsPerSecond,
-			cfg.RateLimit.Burst,
-		)
-
-		publicHandler = middleware.RateLimit(
-			publicHandler,
-			limiter,
-		)
+		handler =
+			ratelimit.NewIPLimiter(
+				cfg.RateLimit.RequestsPerSecond,
+				cfg.RateLimit.Burst,
+			).Middleware(handler)
 	}
 
-	mux.Handle("/", publicHandler)
+	mux := http.NewServeMux()
+	mux.Handle("/metrics", m)
+	mux.Handle("/", handler)
 
-	address := fmt.Sprintf(
-		":%d",
-		cfg.Server.Port,
-	)
+	address :=
+		fmt.Sprintf(
+			":%d",
+			cfg.Server.Port,
+		)
 
 	server := &http.Server{
 		Addr:              address,
@@ -121,43 +104,66 @@ func main() {
 			cfg.LoadBalancer.Strategy,
 		)
 
-		err := server.ListenAndServe()
-
-		if err != nil &&
-			!errors.Is(err, http.ErrServerClosed) {
-			log.Fatalf(
-				"server error: %v",
+		if err :=
+			server.ListenAndServe(); err != nil &&
+			!errors.Is(
 				err,
-			)
+				http.ErrServerClosed,
+			) {
+
+			log.Fatal(err)
 		}
 	}()
 
 	<-ctx.Done()
 
-	log.Println("shutdown signal received")
-
-	shutdownCtx, cancel := context.WithTimeout(
-		context.Background(),
-		10*time.Second,
-	)
+	shutdownCtx, cancel :=
+		context.WithTimeout(
+			context.Background(),
+			10*time.Second,
+		)
 
 	defer cancel()
 
-	log.Println("waiting for active connections to close...")
+	if err :=
+		server.Shutdown(
+			shutdownCtx,
+		); err != nil {
 
-	if err := server.Shutdown(shutdownCtx); err != nil {
 		log.Printf(
-			"graceful shutdown timed out: %v",
+			"graceful shutdown failed: %v",
 			err,
 		)
 
-		if err := server.Close(); err != nil {
-			log.Printf(
-				"forced server close failed: %v",
+		_ = server.Close()
+	}
+}
+
+func createBackends(
+	configs []config.BackendConfig,
+) ([]*backend.Backend, error) {
+	backends := make(
+		[]*backend.Backend,
+		0,
+		len(configs),
+	)
+
+	for _, cfg := range configs {
+		b, err := backend.New(cfg.URL)
+
+		if err != nil {
+			return nil, fmt.Errorf(
+				"invalid backend %q: %w",
+				cfg.URL,
 				err,
 			)
 		}
+
+		backends = append(
+			backends,
+			b,
+		)
 	}
 
-	log.Println("GoLoad stopped")
+	return backends, nil
 }

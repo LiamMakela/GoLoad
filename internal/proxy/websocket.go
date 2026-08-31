@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"context"
+	"errors"
 	"log"
 	"net/http"
 	"net/http/httputil"
@@ -12,11 +13,16 @@ import (
 )
 
 func isWebSocket(r *http.Request) bool {
-	connection := strings.ToLower(r.Header.Get("Connection"))
-	upgrade := strings.ToLower(r.Header.Get("Upgrade"))
-
-	return strings.Contains(connection, "upgrade") &&
-		upgrade == "websocket"
+	return strings.Contains(
+		strings.ToLower(
+			r.Header.Get("Connection"),
+		),
+		"upgrade",
+	) &&
+		strings.EqualFold(
+			r.Header.Get("Upgrade"),
+			"websocket",
+		)
 }
 
 func (p *Proxy) serveWebSocket(
@@ -26,146 +32,149 @@ func (p *Proxy) serveWebSocket(
 	requestID string,
 ) {
 	start := time.Now()
+	success := true
 
-	ctx, cancel := context.WithCancel(r.Context())
+	ctx, cancel :=
+		context.WithCancel(
+			r.Context(),
+		)
+
 	defer cancel()
 
-	go func() {
-		select {
-		case <-p.ctx.Done():
-			cancel()
+	stopShutdown :=
+		context.AfterFunc(
+			p.ctx,
+			cancel,
+		)
 
-		case <-ctx.Done():
-		}
-	}()
+	defer stopShutdown()
 
 	r = r.Clone(ctx)
 
-	target.ActiveConnections.Add(1)
-	target.TotalRequests.Add(1)
+	target.BeginRequest()
 
-	defer target.ActiveConnections.Add(-1)
-
-	proxy := httputil.NewSingleHostReverseProxy(target.URL)
-
-	proxy.ErrorHandler = func(
-		w http.ResponseWriter,
-		r *http.Request,
-		err error,
-	) {
-		target.Failed.Add(1)
-		target.CompletedRequests.Add(1)
-
-		log.Printf(
-			"request_id=%s websocket=true backend=%s error=%q",
-			requestID,
-			target.URL,
-			err,
+	defer func() {
+		target.FinishRequest(
+			success,
+			time.Since(start),
 		)
 
-		http.Error(
-			w,
-			"websocket backend unavailable",
-			http.StatusBadGateway,
-		)
-	}
-
-	originalDirector := proxy.Director
-
-	proxy.Director = func(req *http.Request) {
-		originalDirector(req)
-
-		req.Header.Set(
-			"X-Request-ID",
-			requestID,
-		)
-
-		req.Header.Set(
-			"X-Forwarded-For",
-			clientIP(r),
-		)
-
-		req.Header.Set(
-			"X-Forwarded-Host",
-			r.Host,
-		)
-
-		if r.TLS != nil {
-			req.Header.Set(
-				"X-Forwarded-Proto",
-				"https",
-			)
+		if success {
+			p.metrics.Successful.Add(1)
 		} else {
-			req.Header.Set(
-				"X-Forwarded-Proto",
-				"http",
+			p.metrics.Failed.Add(1)
+		}
+	}()
+
+	reverseProxy :=
+		httputil.NewSingleHostReverseProxy(
+			target.URL,
+		)
+
+	director := reverseProxy.Director
+
+	reverseProxy.Director =
+		func(req *http.Request) {
+			director(req)
+
+			setForwardHeaders(
+				req,
+				r,
+				requestID,
 			)
 		}
+
+	var proxyErr error
+
+	reverseProxy.ErrorHandler =
+		func(
+			w http.ResponseWriter,
+			_ *http.Request,
+			err error,
+		) {
+			proxyErr = err
+
+			// Client disconnects and server shutdowns
+			// are normal for long-lived WebSockets.
+			if errors.Is(
+				err,
+				context.Canceled,
+			) {
+				return
+			}
+
+			http.Error(
+				w,
+				"websocket backend unavailable",
+				http.StatusBadGateway,
+			)
+		}
+
+	reverseProxy.ServeHTTP(w, r)
+
+	if proxyErr != nil &&
+		!errors.Is(
+			proxyErr,
+			context.Canceled,
+		) {
+
+		success = false
+
+		log.Printf(
+			"request_id=%s websocket_backend=%s error=%v",
+			requestID,
+			target.URL,
+			proxyErr,
+		)
+
+		return
 	}
 
-	proxy.ServeHTTP(w, r)
-
-	duration := time.Since(start)
-
-	target.Successful.Add(1)
-	target.CompletedRequests.Add(1)
-
-	target.TotalLatencyNs.Add(
-		uint64(duration.Nanoseconds()),
-	)
-
 	log.Printf(
-		"request_id=%s websocket=true backend=%s duration=%s",
+		"request_id=%s websocket_backend=%s duration=%s",
 		requestID,
 		target.URL,
-		duration,
+		time.Since(start),
 	)
 }
 
-// websocketKey extracts a game ID from a Connect-4
-// WebSocket path.
-//
-// Expected:
-//
-// /games/{game_id}/ws/{player_id}
-func websocketKey(r *http.Request) string {
-	parts := strings.Split(
-		strings.Trim(r.URL.Path, "/"),
-		"/",
-	)
+func websocketKey(
+	r *http.Request,
+) string {
+	parts :=
+		strings.Split(
+			strings.Trim(
+				r.URL.Path,
+				"/",
+			),
+			"/",
+		)
 
 	if len(parts) >= 4 &&
 		parts[0] == "games" &&
 		parts[2] == "ws" {
+
 		return parts[1]
 	}
 
 	return ""
 }
 
-// gameKey extracts the game ID from any route belonging
-// to a particular Connect-4 game.
-//
-// Examples:
-//
-// /games/ABC123
-// /games/ABC123/join
-// /games/ABC123/ws/player-id
-//
-// All return:
-//
-// # ABC123
-//
-// /games by itself returns an empty string because the
-// game does not have an ID yet.
-func gameKey(r *http.Request) string {
-	parts := strings.Split(
-		strings.Trim(r.URL.Path, "/"),
-		"/",
-	)
+func gameKey(
+	r *http.Request,
+) string {
+	parts :=
+		strings.Split(
+			strings.Trim(
+				r.URL.Path,
+				"/",
+			),
+			"/",
+		)
 
 	if len(parts) >= 2 &&
 		parts[0] == "games" {
+
 		return parts[1]
 	}
 

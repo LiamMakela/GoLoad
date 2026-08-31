@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"time"
 
@@ -12,19 +13,8 @@ type Config struct {
 	LoadBalancer LoadBalancerConfig `yaml:"load_balancer"`
 	Health       HealthConfig       `yaml:"health"`
 	Proxy        ProxyConfig        `yaml:"proxy"`
-	RateLimit    RateLimitConfig    `yaml:"rate_limit"`
 	Backends     []BackendConfig    `yaml:"backends"`
-}
-
-type RateLimitConfig struct {
-	Enabled           bool    `yaml:"enabled"`
-	RequestsPerSecond float64 `yaml:"requests_per_second"`
-	Burst             int     `yaml:"burst"`
-}
-
-type ProxyConfig struct {
-	Timeout time.Duration `yaml:"timeout"`
-	Retries int           `yaml:"retries"`
+	RateLimit    RateLimitConfig    `yaml:"rate_limit"`
 }
 
 type ServerConfig struct {
@@ -40,21 +30,37 @@ type HealthConfig struct {
 	Timeout  time.Duration `yaml:"timeout"`
 }
 
+type ProxyConfig struct {
+	Timeout time.Duration `yaml:"timeout"`
+	Retries int           `yaml:"retries"`
+}
+
 type BackendConfig struct {
-	Name string `yaml:"name"`
-	URL  string `yaml:"url"`
+	URL string `yaml:"url"`
+}
+
+type RateLimitConfig struct {
+	Enabled           bool    `yaml:"enabled"`
+	RequestsPerSecond float64 `yaml:"requests_per_second"`
+	Burst             int     `yaml:"burst"`
 }
 
 func Load(path string) (*Config, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf(
+			"read config: %w",
+			err,
+		)
 	}
 
 	var cfg Config
 
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
-		return nil, err
+		return nil, fmt.Errorf(
+			"parse config: %w",
+			err,
+		)
 	}
 
 	return &cfg, nil
