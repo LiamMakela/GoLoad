@@ -1,0 +1,90 @@
+services:
+
+  redis:
+    image: redis:7-alpine
+
+    container_name: connect4-redis
+
+    ports:
+      - "6379:6379"
+
+    volumes:
+      - redis-data:/data
+
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "redis-cli",
+          "ping"
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+
+  backend1:
+    build:
+      context: "../Connect 4/backend"
+
+    environment:
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+
+    depends_on:
+      redis:
+        condition: service_healthy
+
+    expose:
+      - "8000"
+
+
+  backend2:
+    build:
+      context: "../Connect 4/backend"
+
+    environment:
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+
+    depends_on:
+      redis:
+        condition: service_healthy
+
+    expose:
+      - "8000"
+
+
+  goload:
+    build:
+      context: "."
+
+    container_name: goload
+
+    depends_on:
+      - backend1
+      - backend2
+
+    ports:
+      - "8080:8080"
+
+
+  frontend:
+    build:
+      context: "../Connect 4/frontend"
+
+      args:
+        VITE_API_URL: "http://localhost:8080"
+        VITE_WS_URL: "ws://localhost:8080"
+
+    container_name: connect4-frontend
+
+    depends_on:
+      - goload
+
+    ports:
+      - "5173:80"
+
+
+volumes:
+  redis-data:

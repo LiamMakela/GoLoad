@@ -13,10 +13,10 @@ proxy:
   retries: 2
 
 backends:
-  - url: "http://localhost:8001"
-  - url: "http://localhost:8002"
+  - url: "http://backend1:8000"
+  - url: "http://backend2:8000"
 
 rate_limit:
-  enabled: true
-  requests_per_second: 1
-  burst: 2
+  enabled: false
+  requests_per_second: 1000
+  burst: 2000

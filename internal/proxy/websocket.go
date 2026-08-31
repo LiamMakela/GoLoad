@@ -109,6 +109,7 @@ func (p *Proxy) serveWebSocket(
 
 	target.Successful.Add(1)
 	target.CompletedRequests.Add(1)
+
 	target.TotalLatencyNs.Add(
 		uint64(duration.Nanoseconds()),
 	)
@@ -121,10 +122,13 @@ func (p *Proxy) serveWebSocket(
 	)
 }
 
+// websocketKey extracts a game ID from a Connect-4
+// WebSocket path.
+//
+// Expected:
+//
+// /games/{game_id}/ws/{player_id}
 func websocketKey(r *http.Request) string {
-	// Expected:
-	// /games/{game_id}/ws/{player_id}
-
 	parts := strings.Split(
 		strings.Trim(r.URL.Path, "/"),
 		"/",
@@ -133,6 +137,35 @@ func websocketKey(r *http.Request) string {
 	if len(parts) >= 4 &&
 		parts[0] == "games" &&
 		parts[2] == "ws" {
+		return parts[1]
+	}
+
+	return ""
+}
+
+// gameKey extracts the game ID from any route belonging
+// to a particular Connect-4 game.
+//
+// Examples:
+//
+// /games/ABC123
+// /games/ABC123/join
+// /games/ABC123/ws/player-id
+//
+// All return:
+//
+// # ABC123
+//
+// /games by itself returns an empty string because the
+// game does not have an ID yet.
+func gameKey(r *http.Request) string {
+	parts := strings.Split(
+		strings.Trim(r.URL.Path, "/"),
+		"/",
+	)
+
+	if len(parts) >= 2 &&
+		parts[0] == "games" {
 		return parts[1]
 	}
 

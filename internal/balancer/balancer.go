@@ -57,7 +57,7 @@ func (b *Balancer) roundRobin() *backend.Backend {
 	}
 
 	for i := 0; i < n; i++ {
-		index := b.counter.Add(1) % uint64(n)
+		index := (b.counter.Add(1) - 1) % uint64(n)
 		target := b.backends[index]
 
 		if target.Alive.Load() {

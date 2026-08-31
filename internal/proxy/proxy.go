@@ -56,6 +56,19 @@ func (p *Proxy) ServeHTTP(
 
 	defer p.metrics.ActiveRequests.Add(-1)
 
+	// --------------------------------------------------
+	// 1. WEBSOCKET TRAFFIC
+	// --------------------------------------------------
+	//
+	// Connect-4 WebSocket URLs look like:
+	//
+	// /games/{game_id}/ws/{player_id}
+	//
+	// Hashing by game ID guarantees that both players in
+	// the same game connect to the same FastAPI instance.
+	//
+	// The ConnectionManager in FastAPI is process-local,
+	// so this affinity is important.
 	if isWebSocket(r) {
 		key := websocketKey(r)
 
@@ -89,6 +102,73 @@ func (p *Proxy) ServeHTTP(
 		return
 	}
 
+	// --------------------------------------------------
+	// 2. GAME-SPECIFIC HTTP TRAFFIC
+	// --------------------------------------------------
+	//
+	// Examples:
+	//
+	// POST /games/ABC123/join
+	// GET  /games/ABC123
+	//
+	// Use the same game-ID hash used by WebSockets.
+	//
+	// This means:
+	//
+	// /games/ABC123/join
+	// /games/ABC123/ws/player1
+	// /games/ABC123/ws/player2
+	//
+	// all prefer the same FastAPI instance.
+	if key := gameKey(r); key != "" {
+		target := p.balancer.ConsistentHash(key)
+
+		if target == nil {
+			p.metrics.Failed.Add(1)
+
+			http.Error(
+				w,
+				"no healthy backends available",
+				http.StatusServiceUnavailable,
+			)
+
+			return
+		}
+
+		err := p.tryBackend(
+			w,
+			r,
+			target,
+			1,
+			requestID,
+		)
+
+		if err != nil {
+			p.metrics.Failed.Add(1)
+
+			http.Error(
+				w,
+				"backend unavailable",
+				http.StatusBadGateway,
+			)
+		}
+
+		return
+	}
+
+	// --------------------------------------------------
+	// 3. NORMAL HTTP TRAFFIC
+	// --------------------------------------------------
+	//
+	// Requests with no game ID continue using GoLoad's
+	// configured balancing strategy.
+	//
+	// For example:
+	//
+	// POST /games
+	//
+	// can go to either FastAPI backend because Redis is
+	// shared between them.
 	attempts := 1
 
 	if r.Method == http.MethodGet ||
