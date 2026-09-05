@@ -1,4 +1,4 @@
-:80 {
+connect4.conetree.com {
     @api path /games /games/* /health
 
     handle @api {
