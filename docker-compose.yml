@@ -1,17 +1,25 @@
 services:
-  redis:
-    image: redis:7-alpine
-    container_name: connect4-redis
-    restart: unless-stopped
 
-    volumes:
-      - redis-data:/data
+redis:
+  image: redis:7-alpine
+  container_name: connect4-redis
+  restart: unless-stopped
 
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 3s
-      retries: 5
+  command:
+    - redis-server
+    - --maxmemory
+    - 128mb
+    - --maxmemory-policy
+    - allkeys-lru
+
+  volumes:
+    - redis-data:/data
+
+  healthcheck:
+    test: ["CMD", "redis-cli", "ping"]
+    interval: 5s
+    timeout: 3s
+    retries: 5
 
 
   backend1:
