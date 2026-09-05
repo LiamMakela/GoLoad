@@ -1,9 +1,7 @@
 :80 {
-    handle /games/* {
-        reverse_proxy goload:8080
-    }
+    @api path /games /games/* /health
 
-    handle /health {
+    handle @api {
         reverse_proxy goload:8080
     }
 
