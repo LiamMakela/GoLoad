@@ -1,4 +1,9 @@
 .git
 .gitignore
+.github
+.terraform
+infra
+*.tfstate
+*.tfstate.*
+*.tfvars
 README.md
-*.exe

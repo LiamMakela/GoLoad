@@ -1,0 +1,93 @@
+---
+- name: Configure Connect 4 server
+  hosts: all
+  become: true
+
+  vars:
+    deploy_user: deploy
+    deploy_dir: /opt/connect4
+
+  tasks:
+    - name: Update apt cache and install updates
+      ansible.builtin.apt:
+        update_cache: true
+        upgrade: safe
+        cache_valid_time: 3600
+
+    - name: Install required packages
+      ansible.builtin.apt:
+        name:
+          - docker.io
+          - docker-compose-v2
+          - git
+          - unattended-upgrades
+        state: present
+
+    - name: Enable and start Docker
+      ansible.builtin.service:
+        name: docker
+        state: started
+        enabled: true
+
+    - name: Enable automatic security updates
+      ansible.builtin.command:
+        cmd: dpkg-reconfigure -f noninteractive unattended-upgrades
+      changed_when: false
+
+    - name: Create deploy user
+      ansible.builtin.user:
+        name: "{{ deploy_user }}"
+        groups:
+          - sudo
+          - docker
+        append: true
+        shell: /bin/bash
+        create_home: true
+
+    - name: Create deploy SSH directory
+      ansible.builtin.file:
+        path: "/home/{{ deploy_user }}/.ssh"
+        state: directory
+        owner: "{{ deploy_user }}"
+        group: "{{ deploy_user }}"
+        mode: "0700"
+
+    - name: Copy root authorized keys to deploy user
+      ansible.builtin.copy:
+        src: /root/.ssh/authorized_keys
+        dest: "/home/{{ deploy_user }}/.ssh/authorized_keys"
+        remote_src: true
+        owner: "{{ deploy_user }}"
+        group: "{{ deploy_user }}"
+        mode: "0600"
+
+    - name: Create deployment directory
+      ansible.builtin.file:
+        path: "{{ deploy_dir }}"
+        state: directory
+        owner: "{{ deploy_user }}"
+        group: "{{ deploy_user }}"
+        mode: "0755"
+
+    - name: Clone Connect 4
+      ansible.builtin.git:
+        repo: https://github.com/LiamMakela/Connect-4.git
+        dest: "{{ deploy_dir }}/Connect-4"
+        version: main
+        force: true
+      become_user: "{{ deploy_user }}"
+
+    - name: Clone GoLoad
+      ansible.builtin.git:
+        repo: https://github.com/LiamMakela/GoLoad.git
+        dest: "{{ deploy_dir }}/GoLoad"
+        version: main
+        force: true
+      become_user: "{{ deploy_user }}"
+
+    - name: Start application
+      community.docker.docker_compose_v2:
+        project_src: "{{ deploy_dir }}/GoLoad"
+        state: present
+        build: always
+      become_user: "{{ deploy_user }}"

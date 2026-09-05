@@ -1,23 +1,14 @@
 services:
-
   redis:
     image: redis:7-alpine
-
     container_name: connect4-redis
-
-    ports:
-      - "6379:6379"
+    restart: unless-stopped
 
     volumes:
       - redis-data:/data
 
     healthcheck:
-      test:
-        [
-          "CMD",
-          "redis-cli",
-          "ping"
-        ]
+      test: ["CMD", "redis-cli", "ping"]
       interval: 5s
       timeout: 3s
       retries: 5
@@ -25,7 +16,9 @@ services:
 
   backend1:
     build:
-      context: "../Connect 4/backend"
+      context: "../Connect-4/backend"
+
+    restart: unless-stopped
 
     environment:
       REDIS_HOST: redis
@@ -41,7 +34,9 @@ services:
 
   backend2:
     build:
-      context: "../Connect 4/backend"
+      context: "../Connect-4/backend"
+
+    restart: unless-stopped
 
     environment:
       REDIS_HOST: redis
@@ -60,31 +55,54 @@ services:
       context: "."
 
     container_name: goload
+    restart: unless-stopped
 
     depends_on:
       - backend1
       - backend2
 
-    ports:
-      - "8080:8080"
+    expose:
+      - "8080"
 
 
   frontend:
     build:
-      context: "../Connect 4/frontend"
+      context: "../Connect-4/frontend"
 
       args:
-        VITE_API_URL: "http://localhost:8080"
-        VITE_WS_URL: "ws://localhost:8080"
+        VITE_API_URL: ""
+        VITE_WS_URL: ""
 
     container_name: connect4-frontend
+    restart: unless-stopped
 
     depends_on:
       - goload
 
+    expose:
+      - "80"
+
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: connect4-caddy
+    restart: unless-stopped
+
+    depends_on:
+      - frontend
+      - goload
+
     ports:
-      - "5173:80"
+      - "80:80"
+      - "443:443"
+
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
 
 
 volumes:
   redis-data:
+  caddy-data:
+  caddy-config:
