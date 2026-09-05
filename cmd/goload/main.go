@@ -72,10 +72,8 @@ func main() {
 
 	if cfg.RateLimit.Enabled {
 		handler =
-			ratelimit.NewIPLimiter(
-				cfg.RateLimit.RequestsPerSecond,
-				cfg.RateLimit.Burst,
-			).Middleware(handler)
+			ratelimit.NewRouteLimiter().
+				Middleware(handler)
 	}
 
 	mux := http.NewServeMux()

@@ -1,25 +1,29 @@
 services:
 
-redis:
-  image: redis:7-alpine
-  container_name: connect4-redis
-  restart: unless-stopped
+  redis:
+    image: redis:7-alpine
+    container_name: connect4-redis
+    restart: unless-stopped
 
-  command:
-    - redis-server
-    - --maxmemory
-    - 128mb
-    - --maxmemory-policy
-    - allkeys-lru
+    command:
+      - redis-server
+      - --maxmemory
+      - 128mb
+      - --maxmemory-policy
+      - allkeys-lru
 
-  volumes:
-    - redis-data:/data
+    mem_limit: 160m
+    cpus: 0.25
+    pids_limit: 100
 
-  healthcheck:
-    test: ["CMD", "redis-cli", "ping"]
-    interval: 5s
-    timeout: 3s
-    retries: 5
+    volumes:
+      - redis-data:/data
+
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
 
 
   backend1:
@@ -27,6 +31,10 @@ redis:
       context: "../Connect-4/backend"
 
     restart: unless-stopped
+
+    mem_limit: 160m
+    cpus: 0.35
+    pids_limit: 100
 
     environment:
       REDIS_HOST: redis
@@ -45,6 +53,10 @@ redis:
       context: "../Connect-4/backend"
 
     restart: unless-stopped
+
+    mem_limit: 160m
+    cpus: 0.35
+    pids_limit: 100
 
     environment:
       REDIS_HOST: redis
@@ -65,6 +77,10 @@ redis:
     container_name: goload
     restart: unless-stopped
 
+    mem_limit: 96m
+    cpus: 0.50
+    pids_limit: 100
+
     depends_on:
       - backend1
       - backend2
@@ -76,13 +92,16 @@ redis:
   frontend:
     build:
       context: "../Connect-4/frontend"
-
       args:
         VITE_API_URL: ""
         VITE_WS_URL: ""
 
     container_name: connect4-frontend
     restart: unless-stopped
+
+    mem_limit: 64m
+    cpus: 0.20
+    pids_limit: 50
 
     depends_on:
       - goload
@@ -95,6 +114,10 @@ redis:
     image: caddy:2-alpine
     container_name: connect4-caddy
     restart: unless-stopped
+
+    mem_limit: 96m
+    cpus: 0.30
+    pids_limit: 100
 
     depends_on:
       - frontend
